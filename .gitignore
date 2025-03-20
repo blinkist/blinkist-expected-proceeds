@@ -1,0 +1,17 @@
+*.csv
+*.pkl
+*.joblib
+*.pickle
+*.pickle.gz
+*.pickle.gz.part
+*.env
+.DS_Store
+.venv
+.pytest_cache
+.mypy_cache
+.ruff_cache
+exploration/proceeds_env/
+*.json
+exploration/catboost_info/
+exploration/output/
+config.py
