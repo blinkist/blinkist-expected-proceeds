@@ -292,6 +292,10 @@ class LagPurchasePredictionModel:
         else:
             raise ValueError("D100 model not trained. Call fit() before predict().")
         
+        # Ensure no negative values in predictions
+        result_df['expected_proceeds_d8'] = result_df['expected_proceeds_d8'].clip(lower=0)
+        result_df['expected_proceeds_d100'] = result_df['expected_proceeds_d100'].clip(lower=0)
+        
         # Validate: D8 should be >= D0
         if 'eur_proceeds_d0' in result_df.columns:
             d0_d8_violations = (result_df['expected_proceeds_d8'] < result_df['eur_proceeds_d0']).sum()

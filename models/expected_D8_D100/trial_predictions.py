@@ -229,5 +229,9 @@ class TrialPredictionModel:
         # For trial users, d100 is the same as d8
         result_df['expected_proceeds_d100'] = result_df['expected_proceeds_d8']
         
+        # Ensure no negative values in predictions
+        result_df['expected_proceeds_d8'] = result_df['expected_proceeds_d8'].clip(lower=0)
+        result_df['expected_proceeds_d100'] = result_df['expected_proceeds_d100'].clip(lower=0)
+        
         print(f"Prediction completed for {len(result_df)} trial users")
         return result_df

@@ -1,6 +1,38 @@
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Tuple, Optional, Union
+from country_utils import add_signup_country_group
+
+def load_data(session):
+    """
+    Load input data and product data from Snowflake.
+    
+    Args:
+        session: Snowflake session
+        
+    Returns:
+        Tuple of (input_df, product_df)
+    """
+    # Load input data
+    input_query = """
+        SELECT 
+            *
+        FROM BLINKIST_PRODUCTION.CORE_BUSINESS.EXP_PROCEEDS_INPUT
+        """
+    input_df = session.sql(input_query).to_pandas()
+    
+    # Add country groups immediately
+    input_df = add_signup_country_group(input_df)
+    
+    # Load product data
+    product_query = """
+        SELECT sku as product_name, price 
+        FROM BLINKIST_PRODUCTION.reference_tables.product_dim
+        WHERE is_purchasable;
+        """
+    product_df = session.sql(product_query).to_pandas()
+    
+    return input_df, product_df
 
 def split_data_by_date(
     df: pd.DataFrame,
