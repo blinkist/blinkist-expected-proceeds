@@ -114,6 +114,9 @@ def save_predictions(session, predictions_df, inference_date):
     # Add inference date column
     predictions_df['inference_date'] = inference_date
     
+    # Add predicted_at column with current timestamp
+    predictions_df['predicted_at'] = datetime.now()
+    
     # Convert to Snowpark DataFrame
     snowpark_df = session.create_dataframe(predictions_df)
     
