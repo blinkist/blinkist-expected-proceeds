@@ -6,9 +6,9 @@ import logging
 
 # Import custom modules
 from data_utils import split_data_by_date, split_data_by_user_type, load_data
-from models.expected_D8_D100.models.trial_predictions import TrialPredictionModel
-from models.expected_D8_D100.models.direct_purchase_predictions import DirectPurchasePredictionModel
-from models.expected_D8_D100.models.lag_purchase_predictions import LagPurchasePredictionModel
+from trial_predictions import TrialPredictionModel
+from direct_purchase_predictions import DirectPurchasePredictionModel
+from lag_purchase_predictions import LagPurchasePredictionModel
 
 # Connect to Snowflake
 from snowflake.snowpark.context import get_active_session
