@@ -20,10 +20,7 @@ def load_data(session):
         FROM BLINKIST_PRODUCTION.CORE_BUSINESS.EXP_PROCEEDS_INPUT
         """
     input_df = session.sql(input_query).to_pandas()
-    
-    # Add country groups immediately
-    input_df = add_signup_country_group(input_df)
-    
+
     # Load product data
     product_query = """
         SELECT sku as product_name, price 
@@ -31,6 +28,14 @@ def load_data(session):
         WHERE is_purchasable;
         """
     product_df = session.sql(product_query).to_pandas()
+
+    # Standardize column names to lowercase right after loading
+    input_df.columns = [col.lower() for col in input_df.columns]
+    product_df.columns = [col.lower() for col in product_df.columns]
+    
+    # Add country groups immediately
+    input_df = add_signup_country_group(input_df)
+    
     
     return input_df, product_df
 

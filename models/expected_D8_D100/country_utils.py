@@ -30,6 +30,10 @@ class CountryGrouper:
         temp_df["temp_country"] = np.where(temp_df.signup_country == "US",
                                            (temp_df.signup_country + "-" + temp_df.us_state), temp_df.signup_country)
 
+        # Ensure report_date is in datetime format
+        if not pd.api.types.is_datetime64_any_dtype(temp_df.report_date):
+            temp_df['report_date'] = pd.to_datetime(temp_df.report_date)
+        
         # base clustering on last 6 months of data
         six_months_ago = pd.to_datetime("today") - pd.Timedelta(180, "day")
 
