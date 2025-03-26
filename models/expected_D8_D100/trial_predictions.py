@@ -48,28 +48,22 @@ class TrialPredictionModel:
         Args:
             training_df: DataFrame with historical data
         """
+        # Not sure how logging in dbt works, but we might not need all these logs below.
         print("Calculating historical proceeds...")
         
         # Filter to only include records with non-zero proceeds
         converted_df = training_df[training_df['eur_proceeds_d8'] > 0].copy()
-        print(f"Found {len(converted_df)} records with non-zero proceeds")
         
         # Calculate global average proceeds
         self.global_average_proceeds = converted_df['eur_proceeds_d8'].mean()
-        print(f"Global average proceeds: {self.global_average_proceeds}")
         
         # Calculate average proceeds by product
-        product_proceeds = converted_df.groupby('product_name')['eur_proceeds_d8'].mean().to_dict()
-        self.product_proceeds = product_proceeds
-        print(f"Calculated average proceeds for {len(product_proceeds)} products")
+        self.product_proceeds = converted_df.groupby('product_name')['eur_proceeds_d8'].mean().to_dict()
         
         # Calculate average proceeds by product and country group
-        country_product_proceeds = {}
         for (country, product), group in converted_df.groupby(['signup_country_group', 'product_name']):
             if len(group) >= 10:  # Only use combinations with enough data
-                country_product_proceeds[(country, product)] = group['eur_proceeds_d8'].mean()
-        self.country_product_proceeds = country_product_proceeds
-        print(f"Calculated average proceeds for {len(country_product_proceeds)} product-country combinations")
+                self.country_product_proceeds[(country, product)] = group['eur_proceeds_d8'].mean()
     
     def _get_average_proceeds(self, user_row):
         """
@@ -99,7 +93,7 @@ class TrialPredictionModel:
         # Fall back to global average
         return self.global_average_proceeds
         
-    def fit(self, training_d8_df, training_d100_df):
+    def fit(self, training_d8_df):
         """
         Train the model using historical data.
         
@@ -120,24 +114,10 @@ class TrialPredictionModel:
         y = (training_d8_df['eur_proceeds_d8'] > 0).astype(int)
         
         # Log target values
-        print(f"Target values before outlier removal: {np.unique(y)}")
         print(f"Target distribution: 0s: {sum(y==0)}, 1s: {sum(y==1)}")
-        
-        # Remove outliers (optional)
-        outlier_mask = np.zeros(len(X), dtype=bool)
-        outlier_count = outlier_mask.sum()
-        print(f"Removed {outlier_count} outliers from {len(X)} samples ({outlier_count/len(X)*100:.2f}%)")
-        
-        # Apply outlier mask if any outliers were found
-        if outlier_count > 0:
-            X = X[~outlier_mask]
-            y = y[~outlier_mask]
-            print(f"Target values after outlier removal: {np.unique(y)}")
-            print(f"Target distribution after outlier removal: 0s: {sum(y==0)}, 1s: {sum(y==1)}")
-        
+                
         # Define preprocessing for numerical features
         numerical_features = X.select_dtypes(include=['int64', 'float64']).columns.tolist()
-        print(f"Numerical features: {numerical_features}")
         numerical_transformer = Pipeline(steps=[
             ('imputer', SimpleImputer(strategy='median')),
             ('scaler', StandardScaler())
@@ -145,27 +125,22 @@ class TrialPredictionModel:
         
         # Define preprocessing for categorical features
         categorical_features = X.select_dtypes(include=['object', 'category']).columns.tolist()
-        print(f"Categorical features: {categorical_features}")
         categorical_transformer = Pipeline(steps=[
-            ('imputer', SimpleImputer(strategy='most_frequent')),
+            ('imputer', SimpleImputer(strategy='most_frequent')),  # not sure this strategy makes sense if e.g. channel_group or marketing_network_id is missing . I feel we shoudld then just drop the row (in data import step)
             ('onehot', OneHotEncoder(handle_unknown='ignore'))
         ])
         
-        # Combine preprocessing steps
-        preprocessor = ColumnTransformer(
+        # Create preprocessor
+        self.preprocessor = ColumnTransformer(
             transformers=[
                 ('num', numerical_transformer, numerical_features),
                 ('cat', categorical_transformer, categorical_features)
             ]
         )
         
-        # Create and fit the preprocessor
-        print("Fitting preprocessor...")
-        self.preprocessor = preprocessor.fit(X)
-        
         # Transform the training data
         print("Transforming training data...")
-        X_processed = self.preprocessor.transform(X)
+        X_processed = self.preprocessor.fit_transform(X)
         
         # Create and train the model
         print("Creating XGBClassifier...")
@@ -180,7 +155,6 @@ class TrialPredictionModel:
         
         # Train the model with binary target
         print(f"Training model with X shape: {X_processed.shape}, y shape: {y.shape}")
-        print(f"y unique values: {np.unique(y)}")
         self.model.fit(X_processed, y)
         print("Model training completed")
     
@@ -197,7 +171,7 @@ class TrialPredictionModel:
         print("Starting trial model prediction...")
         
         # Make a copy of the inference data
-        result_df = inference_df.copy()
+        result_df = inference_df.copy()  # don't think this is actually needed, especially when running in dbt
         
         # Extract features for prediction
         X = result_df[self.features]
@@ -210,16 +184,13 @@ class TrialPredictionModel:
         # Predict conversion probability
         print("Predicting conversion probabilities...")
         conversion_probs = self.model.predict_proba(X_processed)[:, 1]
-        print(f"Generated {len(conversion_probs)} probability predictions")
-        print(f"Probability range: {conversion_probs.min()} to {conversion_probs.max()}")
         
         # Calculate expected proceeds
         print("Calculating expected proceeds...")
         expected_proceeds = []
         for i, prob in enumerate(conversion_probs):
             # Get average proceeds for this user's country group and product
-            user_row = result_df.iloc[i]
-            avg_proceeds = self._get_average_proceeds(user_row)
+            avg_proceeds = self._get_average_proceeds(result_df.iloc[i])
             # Expected proceeds = probability of conversion * average proceeds if converted
             expected_proceeds.append(prob * avg_proceeds)
         
@@ -227,11 +198,10 @@ class TrialPredictionModel:
         result_df['expected_proceeds_d8'] = expected_proceeds
         
         # For trial users, d100 is the same as d8
-        result_df['expected_proceeds_d100'] = result_df['expected_proceeds_d8']
+        result_df['expected_proceeds_d100'] = expected_proceeds
         
         # Ensure no negative values in predictions
-        result_df['expected_proceeds_d8'] = result_df['expected_proceeds_d8'].clip(lower=0)
-        result_df['expected_proceeds_d100'] = result_df['expected_proceeds_d100'].clip(lower=0)
+        result_df[['expected_proceeds_d8', 'expected_proceeds_d100']] = result_df[['expected_proceeds_d8', 'expected_proceeds_d100']].clip(lower=0)
         
         print(f"Prediction completed for {len(result_df)} trial users")
         return result_df
