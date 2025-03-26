@@ -26,16 +26,9 @@ class LagPurchasePredictionModel:
         self.product_dim_df = product_dim_df
         self.d8_product_model = None
         self.d100_product_model = None
-        self.categorical_features = [
-            'channel_group', 'marketing_network_id', 'target_market',
-            'signup_country_group', 'signup_client_platform'
-        ]
-        self.numerical_features = [
-            'eur_marketing_spend', 'impressions', 'clicks',
-            'started_content', 'n_content_starts', 'finished_content', 
-            'n_content_finishes', 'space_user'
-        ]
-        self.features = self.categorical_features + self.numerical_features
+        self.features = ['channel_group', 'marketing_network_id', 'target_market', 'signup_country_group', 
+                         'signup_client_platform', 'eur_marketing_spend', 'impressions', 'clicks',
+                         'started_content', 'n_content_starts', 'finished_content', 'n_content_finishes', 'space_user']
         self.d8_preprocessor = None
         self.d100_preprocessor = None
         self.d8_product_classes = None
@@ -43,24 +36,28 @@ class LagPurchasePredictionModel:
         self.d8_product_proceeds = {}
         self.d100_product_proceeds = {}
         
-    def _create_preprocessor(self):
-        """Create a preprocessing pipeline for the features."""
+    def _create_preprocessor(self, df: pd.DataFrame):  # for consistency across models we could always infer categorical/numerical features from the data (more flexible when adding new features), or always explicity specify.
+        # Define preprocessing for categorical features
+        categorical_features = df.select_dtypes(include=['object', 'category']).columns.tolist()
         categorical_transformer = Pipeline(steps=[
             ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
             ('onehot', OneHotEncoder(handle_unknown='ignore'))
         ])
         
+        # Define preprocessing for numerical features
+        numerical_features = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
         numerical_transformer = Pipeline(steps=[
             ('imputer', SimpleImputer(strategy='median'))
         ])
         
         return ColumnTransformer(
             transformers=[
-                ('cat', categorical_transformer, self.categorical_features),
-                ('num', numerical_transformer, self.numerical_features)
+                ('cat', categorical_transformer, categorical_features),
+                ('num', numerical_transformer, numerical_features)
             ])
     
     def _prepare_product_target(self, df: pd.DataFrame, timeframe: str) -> Tuple[np.ndarray, List[str]]:
+        # ?? 
         """
         Prepare target variable for product prediction.
         
@@ -78,18 +75,19 @@ class LagPurchasePredictionModel:
         proceeds_col = f'eur_proceeds_{timeframe}'
         
         # For users who didn't purchase anything, set product_name to 'no_purchase'
-        df_copy.loc[df_copy[proceeds_col] <= 0, 'product_name'] = 'no_purchase'
+        df_copy.loc[df_copy[proceeds_col] <= 0, 'product_name'] = 'no_purchase'  # We could do this in data import step?
         
         # For users with missing product_name but positive proceeds, set to 'unknown_product'
         df_copy.loc[(df_copy[proceeds_col] > 0) & 
-                    (df_copy['product_name'].isna()), 'product_name'] = 'unknown_product'
+                    (df_copy['product_name'].isna()), 'product_name'] = 'unknown_product'  # We could do this in data import step?
         
         # Fill any remaining NaN values with 'no_purchase'
-        df_copy['product_name'].fillna('no_purchase', inplace=True)
+        df_copy['product_name'].fillna('no_purchase', inplace=True)  # We could do this in data import step?
         
         # Get unique product names including 'no_purchase'
         product_classes = sorted(df_copy['product_name'].unique())
         
+        # Do we actually need a separate label encoder for each timeframe? And can we do this on product_dim_df?
         # Create target array - IMPORTANT: Convert product names to integer labels
         # This is the key fix - we need to use integer labels for classification
         label_encoder = LabelEncoder()
@@ -165,8 +163,8 @@ class LagPurchasePredictionModel:
         y_d100_product, self.d100_product_classes = self._prepare_product_target(training_d100_df, 'd100')
         
         # Create and fit preprocessors
-        self.d8_preprocessor = self._create_preprocessor()
-        self.d100_preprocessor = self._create_preprocessor()
+        self.d8_preprocessor = self._create_preprocessor(X_d8)
+        self.d100_preprocessor = self._create_preprocessor(X_d100)
         
         X_d8_processed = self.d8_preprocessor.fit_transform(X_d8)
         X_d100_processed = self.d100_preprocessor.fit_transform(X_d100)
@@ -297,6 +295,7 @@ class LagPurchasePredictionModel:
         result_df['expected_proceeds_d100'] = result_df['expected_proceeds_d100'].clip(lower=0)
         
         # Validate: D8 should be >= D0
+        # This could also happen in SQL when creating the user level output table?
         if 'eur_proceeds_d0' in result_df.columns:
             d0_d8_violations = (result_df['expected_proceeds_d8'] < result_df['eur_proceeds_d0']).sum()
             if d0_d8_violations > 0:
