@@ -13,20 +13,17 @@ class DirectPurchasePredictionModel:
     def fit(self, training_d100_df: pd.DataFrame):
         """Calculate d8 to d100 multipliers from training data."""
         # Calculate multipliers at product_name and signup_country_group level
-        multipliers = training_d100_df.groupby(['product_name', 'signup_country_group']).agg({
-            'eur_proceeds_d8': 'sum',
-            'eur_proceeds_d100': 'sum'
-        }).reset_index()
+        multipliers = training_d100_df.groupby(['product_name', 'signup_country_group']).agg(
+            eur_proceeds_d8=pd.NamedAgg(column='eur_proceeds_d8', aggfunc='sum'),
+            eur_proceeds_d100=pd.NamedAgg(column='eur_proceeds_d100', aggfunc='sum'),
+            entry_count=pd.NamedAgg(column='eur_proceeds_d8', aggfunc='count')
+            ).reset_index()
         
         # Calculate the ratio
         multipliers['d100_to_d8_ratio'] = multipliers['eur_proceeds_d100'] / multipliers['eur_proceeds_d8'].replace(0, np.nan)
         
         # Ensure multiplier is not less than 1
         multipliers['d100_to_d8_ratio'] = multipliers['d100_to_d8_ratio'].apply(lambda x: max(x, 1))
-        
-        # Handle cases with too few entries by falling back to product_name level
-        min_entries = 100  # Define a threshold for minimum entries
-        multipliers['entry_count'] = training_d100_df.groupby(['product_name', 'signup_country_group'])['eur_proceeds_d8'].transform('count')
         
         # Calculate product_name level multipliers
         product_level_multipliers = training_d100_df.groupby('product_name').agg({
@@ -42,6 +39,7 @@ class DirectPurchasePredictionModel:
         multipliers = multipliers.merge(product_level_multipliers[['product_name', 'd100_to_d8_ratio']], on='product_name', suffixes=('', '_product'))
         
         # Use product level multiplier if entry count is below threshold
+        min_entries = 100
         multipliers['d100_to_d8_ratio'] = np.where(
             multipliers['entry_count'] < min_entries,
             multipliers['d100_to_d8_ratio_product'],
@@ -73,29 +71,25 @@ class DirectPurchasePredictionModel:
         product_country_multipliers = self.multipliers.set_index(['product_name', 'signup_country_group'])['d100_to_d8_ratio'].to_dict()
         
         # Apply the multipliers with fallback logic
-        def get_multiplier(row):
+        def apply_multiplier(row):
             # First try product and country combination
             key = (row['product_name'], row['signup_country_group'])
             if key in product_country_multipliers:
-                return product_country_multipliers[key]
+                return product_country_multipliers[key] * row['eur_proceeds_d8']
             # Fall back to product level
             elif row['product_name'] in product_multipliers:
-                return product_multipliers[row['product_name']]
+                return product_multipliers[row['product_name']] * row['eur_proceeds_d8']
             # Fall back to average ratio
             else:
-                return avg_ratio
+                return avg_ratio * row['eur_proceeds_d8']
         
         # Add expected_proceeds_d8 column
         result_df['expected_proceeds_d8'] = result_df['eur_proceeds_d8']
         
-        # Apply the multiplier function to get d100_to_d8_ratio
-        result_df['d100_to_d8_ratio'] = result_df.apply(get_multiplier, axis=1)
-        
-        # Calculate expected_proceeds_d100
-        result_df['expected_proceeds_d100'] = result_df['eur_proceeds_d8'] * result_df['d100_to_d8_ratio']
+        # Add expected_proceeds_d100
+        result_df['expected_proceeds_d100'] = result_df.apply(apply_multiplier, axis=1)
         
         # Ensure no negative values in predictions
-        result_df['expected_proceeds_d8'] = result_df['expected_proceeds_d8'].clip(lower=0)
-        result_df['expected_proceeds_d100'] = result_df['expected_proceeds_d100'].clip(lower=0)
+        result_df[['expected_proceeds_d8', 'expected_proceeds_d100']] = result_df[['expected_proceeds_d8', 'expected_proceeds_d100']].clip(lower=0)
         
         return result_df
